@@ -1,127 +1,144 @@
 #include "opentherm_hub.h"
 
-#include "esphome/core/string_ref.h"
+#include "esphome/core/application.h"
 #include "esphome/core/log.h"
 
-#include <unordered_map>
-
 namespace esphome {
-    namespace opentherm {
+namespace opentherm {
 
-        static const char *TAG = "opentherm";
+constexpr static const char *TAG = "opentherm";
+constexpr static const char *RECEIVING_NAME = "receiving";
+constexpr static const char *MAX_TIMEOUT_NAME = "max_timeout";
+constexpr static uint32_t RECEIVING_TIMEOUT = 834;
+constexpr static uint32_t PRE_RECEIVE_TIMEOUT = 20;
+constexpr static uint32_t POST_RECEIVE_TIMEOUT = 100;
+constexpr static uint32_t MAX_TIMEOUT = 1150;
 
-        OpenthermHub::OpenthermStatusListener::OpenthermStatusListener()
-                : OpenthermComponent(OpenThermMessageID::Status, true) {
+OpenthermHub::OpenthermHub() : remote_base::RemoteReceiverListener(), Component() {}
 
+void OpenthermHub::setup() {
+  if (transmitter == nullptr || receiver == nullptr) {
+    mark_failed();
+  } else {
+    receiver->register_listener(this);
+    ESP_LOGI(TAG, "Opentherm hub initialized");
+  }
+}
+
+void OpenthermHub::loop() {
+  if (state == IDLE) {
+    cancel_timeout(MAX_TIMEOUT_NAME);
+
+    if (!queue.empty()) {
+      remote_base::OpenthermData data = queue.pop_front();
+
+      state = PRE_RECEIVE;
+
+      set_timeout(MAX_TIMEOUT_NAME, MAX_TIMEOUT, [this] {
+        ESP_LOGW(TAG, "Message timeout");
+        state = IDLE;
+      });
+
+      auto call = transmitter->transmit();
+      for (auto component : components) {
+        if ((component->message_id == data.id) &&
+            (static_cast<uint8_t>(component->message_type) == (data.type & OpenthermDataComp::TYPE_MASK))) {
+          component->build_request(data);
+        }
+        App.feed_wdt();
+      }
+
+      data.calc_parity();
+
+      ESP_LOGD(TAG, "Send Opentherm: type=0x%02X, id=0x%02X, data=0x%04X", data.type, data.id, data.data);
+      protocol.encode(call.get_data(), data);
+      call.perform();
+
+      set_timeout(PRE_RECEIVE_TIMEOUT, [this] { state = RECEIVING; });
+
+      set_timeout(RECEIVING_NAME, RECEIVING_TIMEOUT, [this, data] {
+        for (auto component : components) {
+          if (component->message_id == data.id) {
+            component->on_error();
+          }
+          App.feed_wdt();
         }
 
-        void OpenthermHub::OpenthermStatusListener::process_response(const unsigned long response) {
-            /* Do nothing */
-        }
+        ESP_LOGW(TAG, "Receive timeout");
+        state = IDLE;
+      });
+    }
+  }
+}
 
-        unsigned int OpenthermHub::OpenthermStatusListener::build_request(const unsigned int data) {
-            return data;
-        }
+bool OpenthermHub::recv() {
+  state = POST_RECEIVE;
+  set_timeout(POST_RECEIVE_TIMEOUT, [this] {
+    ESP_LOGD(TAG, "Message done, remaining message: %u", queue.size());
+    state = IDLE;
+  });
 
-        unsigned int OpenthermHub::build_request(OpenThermMessageID id) {
-            unsigned int data = 0;
+  return true;
+}
 
-            for (auto component: components)
-                if (component->message_id == id)
-                    data = component->build_request(data);
+bool OpenthermHub::on_receive(remote_base::RemoteReceiveData data) {
+  optional<remote_base::OpenthermData> ot;
 
-            return ot.buildRequest(get_message_type(id), id, data);
-        }
+  if (state != RECEIVING)
+    return false;
 
-        OpenThermMessageType OpenthermHub::get_message_type(OpenThermMessageID id) {
-            switch (id) {
-                case OpenThermMessageID::Status:
-                    return OpenThermMessageType::READ_DATA;
-                default:
-                    return OpenThermMessageType::UNKNOWN_DATA_ID;
-            }
-        }
+  cancel_timeout(RECEIVING_NAME);
 
-        OpenthermHub::OpenthermHub(int in_pin, int out_pin, bool is_thermostat,
-                                   handle_interrupt_t handle_interrupt_cb, process_response_t process_response_cb)
-                : Component(),
-                  ot(in_pin, out_pin, is_thermostat),
-                  components(),
-                  queue(),
-                  status_listener(),
-                  handle_interrupt_cb(handle_interrupt_cb),
-                  process_response_cb(process_response_cb) {
-            /* Do nothing */
-        }
+  ot = protocol.decode(data);
 
-        void IRAM_ATTR OpenthermHub::handle_interrupt() {
-            ot.handleInterrupt();
-        }
+  /* Check if the data was valid */
+  if (!ot.has_value())
+    return false;
 
-        void OpenthermHub::process_response(unsigned long response, OpenThermResponseStatus status) {
-            if (!ot.isValidResponse(response)) {
-                ESP_LOGW(TAG, "Received invalid OpenTherm response: %s, status=%s", String(response, HEX).c_str(),
-                         String(static_cast<int>(ot.getLastResponseStatus())).c_str());
-                return;
-            }
+  /* Check if the parity was valid */
+  if (!ot->check_parity()) {
+    ESP_LOGW(TAG, "Invalid parity");
 
-            auto id = static_cast<OpenThermMessageID>((response >> 16) & 0xFF);
-            ESP_LOGD(TAG, "Received OpenTherm response with id %d: %s", id, String(response, HEX).c_str());
+    for (auto component : components) {
+      if (component->message_id == ot->id) {
+        component->on_error();
+      }
 
-            for (auto component: components)
-                if (component->message_id == id)
-                    component->process_response(response);
-        }
+      App.feed_wdt();
+    }
+  } else if ((ot->type & 0x70) == remote_base::DATA_INVALID) {
+    ESP_LOGW(TAG, "Data invalid: id=0x%02X, data=0x%04X", ot->id, ot->data);
+  } else if ((ot->type & 0x70) == remote_base::UNKNOWN_DATA_ID) {
+    ESP_LOGW(TAG, "Unknown data id: 0x%02X", ot->id);
+  } else {
+    ESP_LOGD(TAG, "Received Opentherm: type=0x%02X, id=0x%02X, data=0x%04X", ot->type, ot->id, ot->data);
 
-        void OpenthermHub::register_component(OpenthermComponent *component) {
-            components.insert(component);
-        }
+    for (auto component : components) {
+      if (component->message_id == ot->id) {
+        component->on_receive(ot.value());
+      }
 
-        void OpenthermHub::setup() {
-            ESP_LOGD(TAG, "Registering status listener");
-            register_component(&status_listener);
+      App.feed_wdt();
+    }
+  }
 
-            ESP_LOGD(TAG, "Initializing message queue");
-            for (auto component: components)
-                if (!component->keep_updated)
-                    queue.push(component->message_id);
+  return recv();
+}
 
-            ESP_LOGD(TAG, "Starting OpenTherm component");
-            ot.begin(handle_interrupt_cb, process_response_cb);
-        }
+void OpenthermHub::register_component(OpenthermBaseComponent *component) { components.insert(component); }
 
-        void OpenthermHub::on_shutdown() {
-            ot.end();
-        }
+void OpenthermHub::enqueue(uint8_t message_type, uint8_t message_id) {
+  if (queue.emplace(message_type, message_id, 0)) {
+    ESP_LOGI(TAG, "Enqueued message with type 0x%02X, id 0x%02X", message_type, message_id);
+  } else {
+    ESP_LOGI(TAG, "Message with type 0x%02X, id 0x%02X not unique", message_type, message_id);
+  }
+}
 
-        void OpenthermHub::loop() {
-            if (ot.isReady()) {
-                /* Determine if the queue contains elements */
-                if (queue.empty()) {
-                    /* Fill the queue with repeating messages if none are available */
-                    for (auto component: components)
-                        if (component->keep_updated)
-                            queue.push(component->message_id);
-                }
+void OpenthermHub::dump_config() {
+  ESP_LOGCONFIG(TAG, "Opentherm:");
+  ESP_LOGCONFIG(TAG, "  Total number of components: %u", components.size());
+}
 
-                /* Get the first message ID from the queue */
-                if (!queue.empty()) {
-                    /* Build the request */
-                    unsigned int request = build_request(queue.front());
-                    queue.pop();
-
-                    /* Send the OpenTherm request */
-                    ot.sendRequestAync(request);
-                    ESP_LOGD(TAG, "Sent OpenTherm request: %s", String(request, HEX).c_str());
-                }
-            }
-
-            ot.process();
-        }
-
-        void OpenthermHub::dump_config() {
-            ESP_LOGCONFIG(TAG, "OpenTherm");
-        }
-
-    }  // namespace opentherm
+}  // namespace opentherm
 }  // namespace esphome

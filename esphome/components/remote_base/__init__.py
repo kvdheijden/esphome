@@ -36,6 +36,7 @@ from esphome.const import (
     CONF_ID,
     CONF_BUTTON,
     CONF_CHECK,
+    CONF_TYPE,
 )
 from esphome.core import coroutine
 from esphome.schema_extractors import SCHEMA_EXTRACT, schema_extractor
@@ -79,7 +80,6 @@ REMOTE_LISTENER_SCHEMA = cv.Schema(
         cv.GenerateID(CONF_RECEIVER_ID): cv.use_id(RemoteReceiverBase),
     }
 )
-
 
 REMOTE_TRANSMITTABLE_SCHEMA = cv.Schema(
     {
@@ -423,7 +423,6 @@ async def canalsatld_action(var, config, args):
     CoolixAction,
     CoolixDumper,
 ) = declare_protocol("Coolix")
-
 
 COOLIX_BASE_SCHEMA = cv.Schema(
     {
@@ -1698,6 +1697,134 @@ def nexa_action(var, config, args):
         var.set_channel((yield cg.templatable(config[CONF_CHANNEL], args, cg.uint8)))
     )
     cg.add(var.set_level((yield cg.templatable(config[CONF_LEVEL], args, cg.uint8))))
+
+
+# Opentherm
+(
+    OpenthermData,
+    OpenthermBinarySensor,
+    OpenthermTrigger,
+    OpenthermAction,
+    OpenthermDumper,
+) = declare_protocol("Opentherm")
+OpenthermMessageType = remote_base_ns.enum("OpenthermMessageType")
+OPENTHERM_MESSAGE_TYPE = {
+    "READ_DATA": OpenthermMessageType.READ_DATA,
+    "WRITE_DATA": OpenthermMessageType.WRITE_DATA,
+    "INVALID_DATA": OpenthermMessageType.INVALID_DATA,
+}
+
+OpenthermMessageId = remote_base_ns.enum("OpenthermMessageId")
+OPENTHERM_MESSAGE_ID = {
+    "STATUS": OpenthermMessageId.STATUS,
+    "CH_SETPOINT": OpenthermMessageId.CH_SETPOINT,
+    "CONTROLLER_CONFIG": OpenthermMessageId.CONTROLLER_CONFIG,
+    "DEVICE_CONFIG": OpenthermMessageId.DEVICE_CONFIG,
+    "COMMAND_CODE": OpenthermMessageId.COMMAND_CODE,
+    "FAULT_FLAGS": OpenthermMessageId.FAULT_FLAGS,
+    "REMOTE": OpenthermMessageId.REMOTE,
+    "COOLING_CONTROL": OpenthermMessageId.COOLING_CONTROL,
+    "CH2_SETPOINT": OpenthermMessageId.CH2_SETPOINT,
+    "CH_SETPOINT_OVERRIDE": OpenthermMessageId.CH_SETPOINT_OVERRIDE,
+    "TSP_COUNT": OpenthermMessageId.TSP_COUNT,
+    "TSP_COMMAND": OpenthermMessageId.TSP_COMMAND,
+    "FHB_SIZE": OpenthermMessageId.FHB_SIZE,
+    "FHB_COMMAND": OpenthermMessageId.FHB_COMMAND,
+    "MAX_MODULATION_LEVEL": OpenthermMessageId.MAX_MODULATION_LEVEL,
+    "MAX_BOILER_CAPACITY": OpenthermMessageId.MAX_BOILER_CAPACITY,
+    "ROOM_SETPOINT": OpenthermMessageId.ROOM_SETPOINT,
+    "MODULATION_LEVEL": OpenthermMessageId.MODULATION_LEVEL,
+    "CH_WATER_PRESSURE": OpenthermMessageId.CH_WATER_PRESSURE,
+    "DHW_FLOW_RATE": OpenthermMessageId.DHW_FLOW_RATE,
+    "DAY_TIME": OpenthermMessageId.DAY_TIME,
+    "DATE": OpenthermMessageId.DATE,
+    "YEAR": OpenthermMessageId.YEAR,
+    "ROOM_SETPOINT_CH2": OpenthermMessageId.ROOM_SETPOINT_CH2,
+    "ROOM_TEMP": OpenthermMessageId.ROOM_TEMP,
+    "FEED_TEMP": OpenthermMessageId.FEED_TEMP,
+    "DHW_TEMP": OpenthermMessageId.DHW_TEMP,
+    "OUTSIDE_TEMP": OpenthermMessageId.OUTSIDE_TEMP,
+    "RETURN_WATER_TEMP": OpenthermMessageId.RETURN_WATER_TEMP,
+    "SOLAR_STORE_TEMP": OpenthermMessageId.SOLAR_STORE_TEMP,
+    "SOLAR_COLLECT_TEMP": OpenthermMessageId.SOLAR_COLLECT_TEMP,
+    "FEED_TEMP_CH2": OpenthermMessageId.FEED_TEMP_CH2,
+    "DHW2_TEMP": OpenthermMessageId.DHW2_TEMP,
+    "EXHAUST_TEMP": OpenthermMessageId.EXHAUST_TEMP,
+    "FAN_SPEED": OpenthermMessageId.FAN_SPEED,
+    "FLAME_CURRENT": OpenthermMessageId.FLAME_CURRENT,
+    "DHW_BOUNDS": OpenthermMessageId.DHW_BOUNDS,
+    "CH_BOUNDS": OpenthermMessageId.CH_BOUNDS,
+    "OTC_CURVE_BOUNDS": OpenthermMessageId.OTC_CURVE_BOUNDS,
+    "DHW_SETPOINT": OpenthermMessageId.DHW_SETPOINT,
+    "MAX_CH_SETPOINT": OpenthermMessageId.MAX_CH_SETPOINT,
+    "OTC_CURVE_RATIO": OpenthermMessageId.OTC_CURVE_RATIO,
+    "HVAC_STATUS": OpenthermMessageId.HVAC_STATUS,
+    "REL_VENT_SETPOINT": OpenthermMessageId.REL_VENT_SETPOINT,
+    "DEVICE_VENT": OpenthermMessageId.DEVICE_VENT,
+    "REL_VENTILATION": OpenthermMessageId.REL_VENTILATION,
+    "REL_HUMID_EXHAUST": OpenthermMessageId.REL_HUMID_EXHAUST,
+    "SUPPLY_INLET_TEMP": OpenthermMessageId.SUPPLY_INLET_TEMP,
+    "SUPPLY_OUTLET_TEMP": OpenthermMessageId.SUPPLY_OUTLET_TEMP,
+    "EXHAUST_INLET_TEMP": OpenthermMessageId.EXHAUST_INLET_TEMP,
+    "EXHAUST_OUTLET_TEMP": OpenthermMessageId.EXHAUST_OUTLET_TEMP,
+    "NOM_REL_VENTILATION": OpenthermMessageId.NOM_REL_VENTILATION,
+    "OVERRIDE_FUNC": OpenthermMessageId.OVERRIDE_FUNC,
+    "OEM_DIAGNOSTIC": OpenthermMessageId.OEM_DIAGNOSTIC,
+    "BURNER_STARTS": OpenthermMessageId.BURNER_STARTS,
+    "CH_PUMP_STARTS": OpenthermMessageId.CH_PUMP_STARTS,
+    "DHW_PUMP_STARTS": OpenthermMessageId.DHW_PUMP_STARTS,
+    "DHW_BURNER_STARTS": OpenthermMessageId.DHW_BURNER_STARTS,
+    "BURNER_HOURS": OpenthermMessageId.BURNER_HOURS,
+    "CH_PUMP_HOURS": OpenthermMessageId.CH_PUMP_HOURS,
+    "DHW_PUMP_HOURS": OpenthermMessageId.DHW_PUMP_HOURS,
+    "DHW_BURNER_HOURS": OpenthermMessageId.DHW_BURNER_HOURS,
+    "OT_VERSION_CONTROLLER": OpenthermMessageId.OT_VERSION_CONTROLLER,
+    "OT_VERSION_DEVICE": OpenthermMessageId.OT_VERSION_DEVICE,
+    "VERSION_CONTROLLER": OpenthermMessageId.VERSION_CONTROLLER,
+    "VERSION_DEVICE": OpenthermMessageId.VERSION_DEVICE
+}
+
+OPENTHERM_SCHEMA = cv.Schema(
+    {
+        cv.Required(CONF_TYPE): cv.enum(OPENTHERM_MESSAGE_TYPE, upper=True),
+        cv.Required(CONF_ID): cv.Any(cv.enum(OPENTHERM_MESSAGE_ID, upper=True), cv.uint8_t, cv.hex_uint8_t),
+        cv.Required(CONF_DATA): cv.Any(cv.uint16_t, cv.hex_uint16_t),
+    }
+)
+
+
+@register_binary_sensor("opentherm", OpenthermBinarySensor, OPENTHERM_SCHEMA)
+def opentherm_binary_sensor(var, config):
+    cg.add(
+        var.set_data(
+            cg.StructInitializer(
+                OpenthermData,
+                ("type", config[CONF_TYPE]),
+                ("id", config[CONF_ID]),
+                ("data", config[CONF_DATA]),
+            )
+        )
+    )
+
+
+@register_trigger("opentherm", OpenthermTrigger, OpenthermData)
+def opentherm_trigger(var, config):
+    pass
+
+
+@register_dumper("opentherm", OpenthermDumper)
+def opentherm_dumper(var, config):
+    pass
+
+
+@register_action("opentherm", OpenthermAction, OPENTHERM_SCHEMA)
+async def opentherm_action(var, config, args):
+    template_ = await cg.templatable(config[CONF_TYPE], args, cg.uint8)
+    cg.add(var.set_type(template_))
+    template_ = await cg.templatable(config[CONF_ID], args, cg.uint8)
+    cg.add(var.set_id(template_))
+    template_ = await cg.templatable(config[CONF_DATA], args, cg.uint16)
+    cg.add(var.set_data(template_))
 
 
 # Midea

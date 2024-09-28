@@ -1,46 +1,31 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import number
-from esphome.const import CONF_MIN_VALUE, CONF_MAX_VALUE, CONF_STEP
+from esphome.components import number, opentherm
+from esphome.components.opentherm import opentherm_ns, OpenthermFloatComponent
+from esphome.const import CONF_ID, CONF_MIN_VALUE, CONF_MAX_VALUE, CONF_STEP
 
-from .. import CONF_OPENTHERM_ID, OpenthermHub, opentherm_ns, input, schema, generate
+OpenthermNumber = opentherm_ns.class_(
+    "OpenthermNumber", OpenthermFloatComponent, number.Number, cg.Component
+)
 
-OpenthermNumber = opentherm_ns.class_("OpenthermNumber", number.Number, cg.Component)
-
-DEPENDENCIES = ["opentherm", "number"]
-
-CONFIG_SCHEMA = (
-    cv.Schema({
-        cv.GenerateID(CONF_OPENTHERM_ID): cv.use_id(OpenthermHub),
-    })
+CONFIG_SCHEMA = cv.All(
+    number.number_schema(OpenthermNumber)
     .extend({
-        cv.Optional(key): number.number_schema(
-            OpenthermNumber.template(generate.get_type(entity))
-            if generate.get_type(entity) is not None else
-            OpenthermNumber,
-            icon=entity["icon"] if "icon" in entity else number._UNDEF,
-            device_class=entity["device_class"] if "device_class" in entity else number._UNDEF,
-            unit_of_measurement=entity["unit_of_measurement"] if "unit_of_measurement" in entity else number._UNDEF,
-        )
-        .extend(generate.opentherm_schema(entity))
-        .extend(input.input_schema(entity))
-        .extend(cv.COMPONENT_SCHEMA)
-        for key, entity in schema.INPUTS.items()
+        cv.Required(CONF_MIN_VALUE): cv.float_,
+        cv.Required(CONF_MAX_VALUE): cv.float_,
+        cv.Optional(CONF_STEP, default=0.00390625): cv.float_,
     })
+    .extend(opentherm.opentherm_component_schema(True))
     .extend(cv.COMPONENT_SCHEMA)
 )
 
 
 async def to_code(config):
-    for key, conf in config.items():
-        if isinstance(conf, dict):
-            var = generate.create_opentherm_component(conf)
-
-            await cg.register_component(var, conf)
-            await number.register_number(var, conf,
-                                         min_value=conf[CONF_MIN_VALUE],
-                                         max_value=conf[CONF_MAX_VALUE],
-                                         step=conf[CONF_STEP])
-
-            hub = await cg.get_variable(config[CONF_OPENTHERM_ID])
-            cg.add(hub.register_component(var))
+    var = cg.new_Pvariable(config[CONF_ID])
+    await cg.register_component(var, config)
+    await number.register_number(var,
+                                 config,
+                                 min_value=config[CONF_MIN_VALUE],
+                                 max_value=config[CONF_MAX_VALUE],
+                                 step=config[CONF_STEP])
+    await opentherm.register_component(var, config)

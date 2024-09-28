@@ -5,41 +5,41 @@
 #include <functional>
 
 namespace esphome {
-    namespace opentherm {
+namespace opentherm {
 
-        template<typename T>
-        class unique_queue {
-        public:
-            bool push(const T &t) {
-                if (lookup.insert(t).second) {
-                    store.push(t);
-                    return true;
-                }
-
-                return false;
-            }
-
-            bool empty() const {
-                return store.empty();
-            }
-
-            const T &front() const {
-                return store.front();
-            }
-
-            T &front() {
-                return store.front();
-            }
-
-            void pop() {
-                lookup.erase(store.front());
-                store.pop();
-            }
-
-        private:
-            std::unordered_set <T> lookup;
-            std::queue <T> store;
-        };
-
+template<typename T, typename Hash = std::hash<T>, typename Pred = std::equal_to<T>> class unique_queue {
+ public:
+  template<typename... Args> bool emplace(Args &&...args) {
+    auto ret = lookup.emplace(args...);
+    if (ret.second) {
+      store.push(*ret.first);
+      return true;
     }
-}
+
+    return false;
+  }
+
+  [[nodiscard]] bool empty() const { return store.empty(); }
+
+  [[nodiscard]] size_t size() const { return store.size(); }
+
+  T pop_front() {
+    T ret = store.front();
+    lookup.erase(ret);
+    store.pop();
+    return ret;
+  }
+
+  void clear() {
+    std::queue<T> empty;
+    lookup.clear();
+    std::swap(store, empty);
+  }
+
+ private:
+  std::unordered_set<T, Hash, Pred> lookup;
+  std::queue<T> store;
+};
+
+}  // namespace opentherm
+}  // namespace esphome
